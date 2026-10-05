@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <title>Sliders</title>
+    <style type="text/css" media="screen">
+      body {
+        font-family: sans-serif;
+      }
+      section {
+        margin: 20px 0;
+      }
+      .track {
+        position: relative;
+        width: 300px;
+        height: 16px;
+        background: #ddd;
+        border-radius: 8px;
+      }
+      .track.vertical {
+        width: 16px;
+        height: 150px;
+      }
+      .fill {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        height: 100%;
+        background: #4183c4;
+        border-radius: 8px;
+      }
+      .vertical .fill {
+        width: 100%;
+        height: auto;
+      }
+      [role="slider"]:focus {
+        outline: 2px solid orange;
+      }
+      /* Like YouTube's volume control: the slider is collapsed until the area is hovered. */
+      #volume-area {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #volume-panel {
+        width: 0;
+        overflow: hidden;
+        transition: width 0.2s;
+      }
+      #volume-area.hover #volume-panel,
+      #volume-panel:focus-within {
+        width: 120px;
+      }
+      #volume-panel .track {
+        width: 110px;
+      }
+      .value {
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <p>
+      Press <code>ga</code>, pick a hint, then use <code>h</code>/<code>l</code> (5%),
+      <code>H</code>/<code>L</code> (25%), <code>0</code>–<code>9</code> and <code>$</code>.
+      <code>Esc</code> or <code>Enter</code> exits; any other key exits and runs as a command.
+    </p>
+
+    <section>
+      Native range: <input id="range" type="range" min="0" max="200" value="100" />
+      <span class="value" id="range-value">100</span>
+    </section>
+
+    <section>
+      ARIA slider (handles arrow keys):
+      <div class="track" id="keys" role="slider" tabindex="0" aria-label="Brightness"
+        aria-valuemin="0" aria-valuemax="100" aria-valuenow="40"><div class="fill"></div></div>
+    </section>
+
+    <section>
+      ARIA slider (mouse only, like many seek bars):
+      <div class="track" id="mouse" role="slider" aria-label="Seek"
+        aria-valuemin="0" aria-valuemax="600" aria-valuenow="120"
+        aria-valuetext="2:00 of 10:00"><div class="fill"></div></div>
+    </section>
+
+    <section>
+      Vertical ARIA slider:
+      <div class="track vertical" id="vertical" role="slider" tabindex="0" aria-label="Bass"
+        aria-orientation="vertical" aria-valuemin="0" aria-valuemax="10" aria-valuenow="5"
+      ><div class="fill"></div></div>
+    </section>
+
+    <section>
+      Hidden until hovered (like YouTube):
+      <div id="volume-area">
+        <button id="mute">🔊</button>
+        <div id="volume-panel">
+          <div class="track" id="volume" role="slider" tabindex="0" aria-label="Volume"
+            aria-valuemin="0" aria-valuemax="100" aria-valuenow="70"><div class="fill"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      const range = document.getElementById("range");
+      range.addEventListener("input", () => {
+        document.getElementById("range-value").textContent = range.value;
+      });
+
+      function render(slider) {
+        const min = parseFloat(slider.getAttribute("aria-valuemin"));
+        const max = parseFloat(slider.getAttribute("aria-valuemax"));
+        const now = parseFloat(slider.getAttribute("aria-valuenow"));
+        const percent = ((now - min) / (max - min)) * 100;
+        const fill = slider.querySelector(".fill");
+        if (slider.getAttribute("aria-orientation") === "vertical") fill.style.height = `${percent}%`;
+        else fill.style.width = `${percent}%`;
+        if (slider.id === "mouse") {
+          const format = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+          slider.setAttribute("aria-valuetext", `${format(now)} of ${format(max)}`);
+        }
+      }
+
+      function setValue(slider, value) {
+        const min = parseFloat(slider.getAttribute("aria-valuemin"));
+        const max = parseFloat(slider.getAttribute("aria-valuemax"));
+        slider.setAttribute("aria-valuenow", String(Math.min(max, Math.max(min, value))));
+        render(slider);
+      }
+
+      for (const slider of document.querySelectorAll("[role=slider]")) {
+        render(slider);
+        const max = parseFloat(slider.getAttribute("aria-valuemax"));
+        const step = max / 20;
+        if (slider.id !== "mouse") {
+          slider.addEventListener("keydown", (event) => {
+            const now = parseFloat(slider.getAttribute("aria-valuenow"));
+            if (["ArrowRight", "ArrowUp"].includes(event.key)) setValue(slider, now + step);
+            else if (["ArrowLeft", "ArrowDown"].includes(event.key)) setValue(slider, now - step);
+            else return;
+            event.preventDefault();
+          });
+        }
+        slider.addEventListener("mousedown", (event) => {
+          const rect = slider.getBoundingClientRect();
+          const min = parseFloat(slider.getAttribute("aria-valuemin"));
+          const fraction = slider.getAttribute("aria-orientation") === "vertical"
+            ? (rect.bottom - event.clientY) / rect.height
+            : (event.clientX - rect.left) / rect.width;
+          setValue(slider, min + fraction * (max - min));
+        });
+      }
+
+      const volumeArea = document.getElementById("volume-area");
+      volumeArea.addEventListener("mouseenter", () => volumeArea.classList.add("hover"));
+      volumeArea.addEventListener("mouseleave", () => volumeArea.classList.remove("hover"));
+    </script>
+  </body>
+</html>

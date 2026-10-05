@@ -54,6 +54,9 @@ class LocalHint {
   // For modes with `showAreaOutlines`: the area's outline is drawn with a distinct style, e.g. for
   // the scroll area which currently receives scroll commands.
   isActiveArea;
+  // For the "adjust a slider" mode: the slider (or video) which this hint adjusts. The hint's
+  // element may instead be a button which reveals the slider.
+  adjustTarget;
   constructor(o) {
     Object.seal(this);
     if (o) Object.assign(this, o);
@@ -160,10 +163,12 @@ const FOCUS_LINK = {
 //   built-in actions (clicking, focusing, etc.).
 // - showAreaOutlines: if true, each hint's whole rect is outlined, so it's clear what the hint
 //   refers to.
+// - skipMediaControls: if true, video player controls aren't revealed when hints are collected.
 const SELECT_SCROLL_AREA = {
   name: "select-scroll-area",
   indicator: "Select an area to scroll",
   showAreaOutlines: true,
+  skipMediaControls: true,
   getLocalHints() {
     const axisSymbols = { x: "↔", y: "↕", xy: "↕↔" };
     return Scroller.getScrollAreas().map((area) =>
@@ -183,6 +188,19 @@ const SELECT_SCROLL_AREA = {
   },
 };
 
+const ADJUST_SLIDER = {
+  name: "adjust-slider",
+  indicator: "Select a slider to adjust",
+  getLocalHints() {
+    return Sliders.findAdjustables().map((adjustable) => new LocalHint(adjustable));
+  },
+  activateHint(localHint) {
+    // Keystrokes must go to the frame which owns the slider.
+    if (!windowIsFocused()) focusThisFrame({ highlight: false });
+    SliderMode.activate(localHint.element, localHint.adjustTarget);
+  },
+};
+
 // NOTE: Frames refer to modes by their index in this list, so new modes must be appended.
 const availableModes = [
   OPEN_IN_CURRENT_TAB,
@@ -196,6 +214,7 @@ const availableModes = [
   HOVER_LINK,
   FOCUS_LINK,
   SELECT_SCROLL_AREA,
+  ADJUST_SLIDER,
 ];
 
 const HintCoordinator = {
@@ -269,6 +288,9 @@ const HintCoordinator = {
     if (requestedByHelpDialog && !globalThis.isVimiumHelpDialog) {
       this.localHints = [];
     } else {
+      // Show auto-hidden video player controls before collecting hints, so that the hints are on
+      // visible buttons.
+      if (Settings.get("revealMediaControls") && !mode.skipMediaControls) MediaControls.reveal();
       this.localHints = mode.getLocalHints
         ? LocalHints.postProcessHints(mode.getLocalHints())
         : LocalHints.getLocalHints(requireHref);
@@ -306,6 +328,8 @@ const HintCoordinator = {
       this.onExit = [];
     }
     this.linkHintsMode = new LinkHintsMode(hintDescriptors, availableModes[modeIndex]);
+    // With no hints in any frame, hints mode never starts, and "exit" is never sent.
+    if (this.linkHintsMode.hintMode == null) MediaControls.stopKeepAlive();
     // Replay keydown events which we missed (but for filtered hints only).
     if (Settings.get("filterLinkHints" && this.cacheAllKeydownEvents)) {
       this.cacheAllKeydownEvents.replayKeydownEvents();
@@ -331,6 +355,7 @@ const HintCoordinator = {
   },
 
   exit({ isSuccess }) {
+    MediaControls.stopKeepAlive();
     if (this.linkHintsMode != null) {
       this.linkHintsMode.deactivateMode();
     }
@@ -398,6 +423,9 @@ const LinkHints = {
   },
   activateModeToSelectScrollArea() {
     this.activateMode(1, { mode: SELECT_SCROLL_AREA });
+  },
+  activateModeToAdjustSlider() {
+    this.activateMode(1, { mode: ADJUST_SLIDER });
   },
 };
 

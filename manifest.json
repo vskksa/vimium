@@ -55,6 +55,8 @@
         "lib/find_mode_history.js",
         "content_scripts/mode.js",
         "content_scripts/ui_component.js",
+        "content_scripts/media_controls.js",
+        "content_scripts/mode_slider.js",
         "content_scripts/link_hints.js",
         "content_scripts/vomnibar.js",
         "content_scripts/scroller.js",

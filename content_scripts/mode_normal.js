@@ -389,6 +389,7 @@ const NormalModeCommands = {
   "LinkHints.activateModeToSelectScrollArea": LinkHints.activateModeToSelectScrollArea.bind(
     LinkHints,
   ),
+  "LinkHints.activateModeToAdjustSlider": LinkHints.activateModeToAdjustSlider.bind(LinkHints),
 
   "Vomnibar.activate": Vomnibar.activate.bind(Vomnibar),
   "Vomnibar.activateInNewTab": Vomnibar.activateInNewTab.bind(Vomnibar),

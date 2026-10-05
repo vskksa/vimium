@@ -259,6 +259,13 @@ const allCommands = [
   },
 
   {
+    name: "LinkHints.activateModeToAdjustSlider",
+    desc: "Adjust a slider (volume, seek bar) with the keyboard",
+    group: "navigation",
+    noRepeat: true,
+  },
+
+  {
     name: "goPrevious",
     desc: "Follow the link labeled previous or <",
     group: "navigation",

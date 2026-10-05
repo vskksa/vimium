@@ -1343,6 +1343,73 @@ context("GrabBackFocus", () => {
   });
 });
 
+context("Revealing media controls", () => {
+  let player, mouseEvents;
+
+  setup(() => {
+    initializeModeState();
+    stub(globalThis, "windowIsFocused", () => true);
+    stubSettings("revealMediaControls", true);
+    stub(MediaControls, "isVideoInUse", () => true);
+    document.getElementById("test-div").innerHTML = `
+      <div id="player" style="position: relative; width: 400px; height: 200px">
+        <video style="width: 400px; height: 200px; display: block"></video>
+        <div id="overlay" style="position: absolute; inset: 0"></div>
+        <button id="play" style="position: absolute; left: 0; bottom: 0">Play</button>
+      </div>`;
+    player = document.getElementById("player");
+    mouseEvents = [];
+    for (const type of ["mouseover", "mouseenter", "mousemove", "pointermove"]) {
+      player.addEventListener(type, (event) => mouseEvents.push(event));
+    }
+  });
+
+  teardown(() => {
+    HintCoordinator.exit({ isSuccess: false });
+    document.getElementById("test-div").innerHTML = "";
+  });
+
+  should("move the mouse over the center of an active video when hints are activated", () => {
+    activateLinkHintsMode();
+    const types = mouseEvents.map((e) => e.type);
+    assert.isTrue(types.includes("mouseover"));
+    assert.isTrue(types.includes("mouseenter"));
+    assert.isTrue(types.includes("pointermove"));
+    const move = mouseEvents.find((e) => e.type === "mousemove");
+    assert.equal(document.getElementById("overlay"), move.target);
+    const rect = player.getBoundingClientRect();
+    assert.equal(rect.left + rect.width / 2, move.clientX);
+    assert.equal(rect.top + rect.height / 2, move.clientY);
+  });
+
+  should("keep the controls shown until hints exit", () => {
+    activateLinkHintsMode();
+    assert.isTrue(MediaControls.isKeepAliveRunning());
+    HintCoordinator.exit({ isSuccess: false });
+    assert.isFalse(MediaControls.isKeepAliveRunning());
+  });
+
+  should("skip videos which aren't in use", () => {
+    stub(MediaControls, "isVideoInUse", () => false);
+    activateLinkHintsMode();
+    assert.equal(0, mouseEvents.length);
+    assert.isFalse(MediaControls.isKeepAliveRunning());
+  });
+
+  should("skip videos which are too small to be a player", () => {
+    player.querySelector("video").style.height = "50px";
+    player.style.height = "50px";
+    activateLinkHintsMode();
+    assert.equal(0, mouseEvents.length);
+  });
+
+  should("do nothing when the setting is off", () => {
+    stubSettings("revealMediaControls", false);
+    activateLinkHintsMode();
+    assert.equal(0, mouseEvents.length);
+  });
+});
+
 context("Scroll areas", () => {
   const filler = (width, height) => `<div style="width: ${width}px; height: ${height}px"></div>`;
 
@@ -1427,5 +1494,190 @@ context("Scroll areas", () => {
     assert.equal("code", ids());
     Scroller.selectAdjacentScrollArea(-2);
     assert.equal("sidebar", ids());
+  });
+});
+
+context("Adjusting sliders", () => {
+  const modeName = "adjust-slider";
+  let events;
+
+  const activateSliderHints = () => {
+    const modeIndex = availableModes.findIndex((m) => m.name === modeName);
+    HintCoordinator.getHintDescriptors({ modeIndex }, {});
+    HintCoordinator.activateMode({
+      frameIdToHintDescriptors: {},
+      modeIndex,
+      originatingFrameId: frameId,
+    });
+    return HintCoordinator.linkHintsMode;
+  };
+
+  // Selects the hint for `element`, and returns the SliderMode which that starts.
+  const selectHintFor = async (element) => {
+    const mode = activateSliderHints();
+    const marker = mode.hintMarkers.find((m) => m.localHint.element === element);
+    assert.isTrue(marker != null);
+    sendKeyboardEvents(marker.hintString);
+    // SliderMode.activate waits for an animation frame when revealing a slider.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return Mode.modes.find((m) => m.name === "slider-mode");
+  };
+
+  // Sends a keydown, and waits for the slider mode's queued operations to finish.
+  const pressKey = async (sliderMode, key, extra) => {
+    sendKeyboardEvent(key, "keydown", Object.assign({ code: `Key${key}` }, extra));
+    await sliderMode.pending;
+  };
+
+  // An ARIA slider which changes by 10 on arrow keys, and optionally sets its value from the
+  // position of a mousedown.
+  const makeAriaSlider = (slider, { handlesKeys, handlesMouse }) => {
+    const setValue = (value) => {
+      slider.setAttribute("aria-valuenow", String(Math.max(0, Math.min(100, value))));
+    };
+    if (handlesKeys) {
+      slider.addEventListener("keydown", (event) => {
+        const now = parseFloat(slider.getAttribute("aria-valuenow"));
+        if (event.key === "ArrowRight") setValue(now + 10);
+        if (event.key === "ArrowLeft") setValue(now - 10);
+      });
+    }
+    if (handlesMouse) {
+      slider.addEventListener("mousedown", (event) => {
+        const rect = slider.getBoundingClientRect();
+        setValue(Math.round(((event.clientX - rect.left) / rect.width) * 100));
+      });
+    }
+  };
+
+  setup(() => {
+    initializeModeState();
+    stub(globalThis, "windowIsFocused", () => true);
+    stubSettings("filterLinkHints", false);
+    stubSettings("linkHintCharacters", "ab");
+    events = [];
+    document.getElementById("test-div").innerHTML = `
+      <input id="range" type="range" min="0" max="200" value="100" style="width: 200px" />
+      <div id="keys-slider" role="slider" tabindex="0" aria-label="Keys"
+        aria-valuenow="50" aria-valuemin="0" aria-valuemax="100"
+        style="width: 200px; height: 20px; background: #ccc"></div>
+      <div id="mouse-slider" role="slider" aria-valuenow="50"
+        style="width: 200px; height: 20px; background: #aaa"></div>
+      <div id="volume-area">
+        <button id="mute">Mute</button>
+        <div id="volume-panel" style="display: inline-block; width: 0; overflow: hidden">
+          <div id="volume" role="slider" tabindex="0" aria-label="Volume"
+            aria-valuenow="50" aria-valuemin="0" aria-valuemax="100"
+            style="width: 100px; height: 20px"></div>
+        </div>
+      </div>`;
+    const range = document.getElementById("range");
+    range.addEventListener("input", () => events.push("input"));
+    range.addEventListener("change", () => events.push("change"));
+    makeAriaSlider(document.getElementById("keys-slider"), { handlesKeys: true });
+    makeAriaSlider(document.getElementById("mouse-slider"), { handlesMouse: true });
+    const volume = document.getElementById("volume");
+    makeAriaSlider(volume, { handlesKeys: true });
+    document.getElementById("volume-area").addEventListener("mouseenter", () => {
+      document.getElementById("volume-panel").style.width = "100px";
+    });
+    document.getElementById("volume-area").addEventListener("mouseleave", () => {
+      document.getElementById("volume-panel").style.width = "0";
+    });
+  });
+
+  teardown(() => {
+    for (const mode of Mode.modes.filter((m) => m.name === "slider-mode")) mode.exit();
+    HintCoordinator.exit({ isSuccess: false });
+    // Selecting a hint flashes its element for a while, which would cover it in the next test. We
+    // hide the flash rather than remove it, because LinkHintsMode removes it itself later.
+    for (const el of document.querySelectorAll(".vimium-flash")) el.style.display = "none";
+    document.getElementById("test-div").innerHTML = "";
+  });
+
+  should("offer visible sliders, and buttons which reveal hidden sliders", () => {
+    const mode = activateSliderHints();
+    const ids = mode.hintMarkers.map((m) => m.localHint.element.id);
+    assert.equal(["range", "keys-slider", "mouse-slider", "mute"], ids);
+    const muteHint = mode.hintMarkers[3].localHint;
+    assert.equal(document.getElementById("volume"), muteHint.adjustTarget);
+  });
+
+  should("change a native range input by 5% steps, and jump with digits", async () => {
+    const range = document.getElementById("range");
+    const sliderMode = await selectHintFor(range);
+    await pressKey(sliderMode, "l");
+    assert.equal("110", range.value);
+    await pressKey(sliderMode, "h");
+    await pressKey(sliderMode, "h");
+    assert.equal("90", range.value);
+    await pressKey(sliderMode, "L", { shiftKey: true });
+    assert.equal("140", range.value);
+    await pressKey(sliderMode, "3", { code: "Digit3" });
+    assert.equal("60", range.value);
+    await pressKey(sliderMode, "$", { code: "Digit4", shiftKey: true });
+    assert.equal("200", range.value);
+    assert.isTrue(events.includes("input"));
+    assert.isTrue(events.includes("change"));
+  });
+
+  should("change an ARIA slider with synthetic arrow keys", async () => {
+    const slider = document.getElementById("keys-slider");
+    const sliderMode = await selectHintFor(slider);
+    assert.equal(slider, document.activeElement);
+    await pressKey(sliderMode, "l");
+    assert.equal("60", slider.getAttribute("aria-valuenow"));
+    await pressKey(sliderMode, "L", { shiftKey: true });
+    // 5 steps of 5% is 25, which rounds to 3 key presses of 10.
+    assert.equal("90", slider.getAttribute("aria-valuenow"));
+    sliderMode.exit();
+    assert.isFalse(slider === document.activeElement);
+  });
+
+  should("fall back to clicking an ARIA slider which ignores keys", async () => {
+    const slider = document.getElementById("mouse-slider");
+    const sliderMode = await selectHintFor(slider);
+    await pressKey(sliderMode, "l");
+    assert.equal("55", slider.getAttribute("aria-valuenow"));
+    await pressKey(sliderMode, "2", { code: "Digit2" });
+    assert.equal("20", slider.getAttribute("aria-valuenow"));
+  });
+
+  should("leave a slider alone when it's already at the requested value", async () => {
+    const slider = document.getElementById("keys-slider");
+    slider.setAttribute("aria-valuenow", "100");
+    let mouseDowns = 0;
+    slider.addEventListener("mousedown", () => mouseDowns++);
+    const sliderMode = await selectHintFor(slider);
+    await pressKey(sliderMode, "$", { code: "Digit4", shiftKey: true });
+    await pressKey(sliderMode, "l");
+    assert.equal("100", slider.getAttribute("aria-valuenow"));
+    assert.equal(0, mouseDowns);
+  });
+
+  should("reveal a hidden slider by hovering its button, and adjust the slider", async () => {
+    const volume = document.getElementById("volume");
+    const panel = document.getElementById("volume-panel");
+    const sliderMode = await selectHintFor(document.getElementById("mute"));
+    assert.equal("100px", panel.style.width);
+    await pressKey(sliderMode, "j");
+    assert.equal("40", volume.getAttribute("aria-valuenow"));
+    sliderMode.exit();
+    assert.equal("0px", panel.style.width);
+  });
+
+  should("exit on other keys, and pass them on to normal mode", async () => {
+    const range = document.getElementById("range");
+    const sliderMode = await selectHintFor(range);
+    sendKeyboardEvent("m");
+    assert.isFalse(sliderMode.modeIsActive);
+    assert.equal("m", commandName);
+    assert.equal("100", range.value);
+  });
+
+  should("not exit on modifier keys", async () => {
+    const sliderMode = await selectHintFor(document.getElementById("range"));
+    sendKeyboardEvent("Shift");
+    assert.isTrue(sliderMode.modeIsActive);
   });
 });

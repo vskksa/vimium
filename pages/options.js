@@ -18,6 +18,7 @@ const options = {
   openVomnibarOnNewTabPage: "boolean",
   previousPatterns: "string",
   regexFindMode: "boolean",
+  revealMediaControls: "boolean",
   scrollStepSize: "number",
   searchEngines: "string",
   settingsVersion: "string", // This is a hidden field.
