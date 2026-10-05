@@ -1342,3 +1342,90 @@ context("GrabBackFocus", () => {
     assert.isTrue(DomUtils.isEditable(document.activeElement));
   });
 });
+
+context("Scroll areas", () => {
+  const filler = (width, height) => `<div style="width: ${width}px; height: ${height}px"></div>`;
+
+  setup(() => {
+    initializeModeState();
+    stub(globalThis, "windowIsFocused", () => true);
+    stubSettings("filterLinkHints", false);
+    stubSettings("linkHintCharacters", "ab");
+    Scroller.reset();
+    document.getElementById("test-div").innerHTML = `
+      <div id="sidebar" style="width: 150px; height: 100px; overflow-y: auto">${
+      filler(100, 500)
+    }</div>
+      <div id="main" style="width: 300px; height: 100px; overflow: auto">${filler(100, 500)}</div>
+      <pre id="code" style="width: 200px; height: 60px; overflow-x: auto">${"x".repeat(500)}</pre>
+      <div id="hidden" style="width: 200px; height: 100px; overflow: hidden">${
+      filler(100, 500)
+    }</div>
+      <div id="short" style="width: 200px; height: 100px; overflow: auto">${filler(100, 50)}</div>
+      <div id="tiny" style="width: 20px; height: 20px; overflow: auto">${filler(10, 500)}</div>`;
+  });
+
+  teardown(() => {
+    HintCoordinator.exit({ isSuccess: false });
+    Scroller.reset();
+    document.getElementById("test-div").innerHTML = "";
+  });
+
+  const getElementAreas = () => Scroller.getScrollAreas().filter((area) => !area.isPage);
+
+  should("find visible areas which scroll, with their axes", () => {
+    const areas = getElementAreas();
+    assert.equal(["sidebar", "main", "code"], areas.map((area) => area.element.id));
+    assert.equal(["y", "y", "x"], areas.map((area) => area.axes));
+  });
+
+  should("mark the activated element as active", () => {
+    Scroller.setActivatedElement(document.getElementById("main"));
+    const areas = getElementAreas();
+    assert.equal([false, true, false], areas.map((area) => area.isActive));
+  });
+
+  should("forget the activated element once it's removed from the page", () => {
+    stubSettings("smoothScroll", false);
+    const main = document.getElementById("main");
+    Scroller.setActivatedElement(main);
+    main.remove();
+    Scroller.scrollBy("y", 1);
+    assert.isFalse(Scroller.getActivatedElement() === main);
+  });
+
+  should("make the selected area the scroll target", () => {
+    stubSettings("smoothScroll", false);
+    const modeIndex = availableModes.findIndex((m) => m.name === "select-scroll-area");
+    HintCoordinator.getHintDescriptors({ modeIndex }, {});
+    HintCoordinator.activateMode({
+      frameIdToHintDescriptors: {},
+      modeIndex,
+      originatingFrameId: frameId,
+    });
+    const mode = HintCoordinator.linkHintsMode;
+    const main = document.getElementById("main");
+    const marker = mode.hintMarkers.find((m) => m.localHint.element === main);
+    assert.isTrue(marker != null);
+    // Each hint has an outline around its area.
+    assert.equal(
+      mode.hintMarkers.length,
+      document.querySelectorAll(".vimium-area-outline").length,
+    );
+    sendKeyboardEvents(marker.hintString);
+    assert.equal(main, Scroller.getActivatedElement());
+    Scroller.scrollBy("y", 20);
+    assert.equal(20, main.scrollTop);
+  });
+
+  should("cycle through the areas", () => {
+    const ids = () => Scroller.getActivatedElement().id || "page";
+    Scroller.setActivatedElement(document.getElementById("sidebar"));
+    Scroller.selectAdjacentScrollArea(1);
+    assert.equal("main", ids());
+    Scroller.selectAdjacentScrollArea(1);
+    assert.equal("code", ids());
+    Scroller.selectAdjacentScrollArea(-2);
+    assert.equal("sidebar", ids());
+  });
+});

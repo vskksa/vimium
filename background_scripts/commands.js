@@ -413,6 +413,7 @@ const defaultKeyMappings = {
   "G": "scrollToBottom",
   "zH": "scrollToLeft",
   "zL": "scrollToRight",
+  "zs": "LinkHints.activateModeToSelectScrollArea",
   "<c-e>": "scrollDown",
   "<c-y>": "scrollUp",
   "d": "scrollPageDown",

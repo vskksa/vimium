@@ -96,6 +96,27 @@ const allCommands = [
   },
 
   {
+    name: "LinkHints.activateModeToSelectScrollArea",
+    desc: "Select which scrollable area to scroll",
+    group: "navigation",
+    noRepeat: true,
+  },
+
+  {
+    name: "nextScrollArea",
+    desc: "Scroll the next scrollable area",
+    group: "navigation",
+    advanced: true,
+  },
+
+  {
+    name: "previousScrollArea",
+    desc: "Scroll the previous scrollable area",
+    group: "navigation",
+    advanced: true,
+  },
+
+  {
     name: "reload",
     desc: "Reload the page",
     group: "navigation",

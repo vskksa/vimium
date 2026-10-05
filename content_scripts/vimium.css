@@ -135,6 +135,22 @@ div > .vimiumActiveHintMarker span {
   color: #a07555 !important;
 }
 
+/* Outlines drawn around each hint's area, e.g. by the "select scroll area" command. */
+div.vimium-area-outline {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px dashed rgba(195, 138, 34, 0.9);
+  background-color: rgba(255, 197, 66, 0.06);
+}
+
+/* The area which currently receives scroll commands. */
+div.vimium-area-outline.vimium-active-area-outline {
+  border: 2px solid #4183c4;
+  background-color: rgba(65, 131, 196, 0.08);
+}
+
 /* Input hints CSS */
 
 div.internal-vimium-input-hint {

@@ -95,6 +95,22 @@ function findSelectedHelper(backwards) {
   FindMode.findNext(backwards);
 }
 
+// Makes the scroll area `count` places after (or before, if negative) the current one the target of
+// scroll commands, and shows which area that is.
+function selectAdjacentScrollArea(count) {
+  const result = Scroller.selectAdjacentScrollArea(count);
+  if (result == null) {
+    HUD.show("No scrollable areas", 1500);
+    return;
+  }
+  const { area, index, total } = result;
+  const { top, left } = DomUtils.getViewportTopLeft();
+  const flashEl = DomUtils.addFlashRect(Rect.translate(area.rect, left, top));
+  Utils.setTimeout(400, () => DomUtils.removeElement(flashEl));
+  const label = area.isPage ? "the page" : `area ${index + 1} of ${total}`;
+  HUD.show(`Scrolling ${label}`, 1500);
+}
+
 const NormalModeCommands = {
   // Scrolling.
   scrollToBottom() {
@@ -134,6 +150,12 @@ const NormalModeCommands = {
   },
   scrollRight(count) {
     Scroller.scrollBy("x", Settings.get("scrollStepSize") * count);
+  },
+  nextScrollArea(count) {
+    selectAdjacentScrollArea(count);
+  },
+  previousScrollArea(count) {
+    selectAdjacentScrollArea(-count);
   },
 
   // Tab navigation: back, forward.
@@ -364,6 +386,9 @@ const NormalModeCommands = {
   "LinkHints.activateModeToOpenIncognito": LinkHints.activateModeToOpenIncognito.bind(LinkHints),
   "LinkHints.activateModeToDownloadLink": LinkHints.activateModeToDownloadLink.bind(LinkHints),
   "LinkHints.activateModeToCopyLinkUrl": LinkHints.activateModeToCopyLinkUrl.bind(LinkHints),
+  "LinkHints.activateModeToSelectScrollArea": LinkHints.activateModeToSelectScrollArea.bind(
+    LinkHints,
+  ),
 
   "Vomnibar.activate": Vomnibar.activate.bind(Vomnibar),
   "Vomnibar.activateInNewTab": Vomnibar.activateInNewTab.bind(Vomnibar),

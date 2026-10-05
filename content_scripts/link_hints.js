@@ -19,6 +19,8 @@ class HintMarker {
   linkText; // Used in FilterHints
   hintString; // Used in AlphabetHints
   markerRect; // Cached rectangle of the element, used for rotating hints.
+  // An outline drawn around the hint's whole element, for modes with `showAreaOutlines`.
+  outlineElement;
   // Element is null if the hint marker reflects a hint that's owned by another frame.
   element;
   // Cached book-keeping when computing a marker's score against a query.
@@ -49,6 +51,9 @@ class LocalHint {
   // An element that may be clickable based on our heuristics. It's a "false positive" if one of its
   // child elements is detected as clickable.
   possibleFalsePositive;
+  // For modes with `showAreaOutlines`: the area's outline is drawn with a distinct style, e.g. for
+  // the scroll area which currently receives scroll commands.
+  isActiveArea;
   constructor(o) {
     Object.seal(this);
     if (o) Object.assign(this, o);
@@ -146,6 +151,39 @@ const FOCUS_LINK = {
   },
 };
 
+// Hint modes can define these optional hooks, to offer hints for things other than clickable
+// elements and to do something other than clicking them:
+// - getLocalHints(): returns this frame's candidate LocalHints, in place of the clickable elements.
+//   They then go through the same filtering as clickable elements (see
+//   LocalHints.postProcessHints).
+// - activateHint(localHint): called in the frame which owns the selected hint, in place of the
+//   built-in actions (clicking, focusing, etc.).
+// - showAreaOutlines: if true, each hint's whole rect is outlined, so it's clear what the hint
+//   refers to.
+const SELECT_SCROLL_AREA = {
+  name: "select-scroll-area",
+  indicator: "Select an area to scroll",
+  showAreaOutlines: true,
+  getLocalHints() {
+    const axisSymbols = { x: "↔", y: "↕", xy: "↕↔" };
+    return Scroller.getScrollAreas().map((area) =>
+      new LocalHint({
+        element: area.element,
+        rect: area.rect,
+        reason: `${area.isPage ? "Page" : "Scroll"} ${axisSymbols[area.axes]}`,
+        isActiveArea: area.isActive,
+      })
+    );
+  },
+  activateHint(localHint) {
+    // Keystrokes must go to the frame which owns the area.
+    if (!windowIsFocused()) focusThisFrame({ highlight: false });
+    Scroller.setActivatedElement(localHint.element);
+    HUD.show("Scrolling selected area", 1500);
+  },
+};
+
+// NOTE: Frames refer to modes by their index in this list, so new modes must be appended.
 const availableModes = [
   OPEN_IN_CURRENT_TAB,
   OPEN_IN_NEW_BG_TAB,
@@ -157,6 +195,7 @@ const availableModes = [
   COPY_LINK_TEXT,
   HOVER_LINK,
   FOCUS_LINK,
+  SELECT_SCROLL_AREA,
 ];
 
 const HintCoordinator = {
@@ -222,14 +261,17 @@ const HintCoordinator = {
   getHintDescriptors({ modeIndex, requestedByHelpDialog }, _sender) {
     if (!DomUtils.isReady() || DomUtils.windowIsTooSmall()) return [];
 
-    const requireHref = [COPY_LINK_URL, OPEN_INCOGNITO].includes(availableModes[modeIndex]);
+    const mode = availableModes[modeIndex];
+    const requireHref = [COPY_LINK_URL, OPEN_INCOGNITO].includes(mode);
     // If link hints is launched within the help dialog, then we only offer hints from that frame.
     // This improves the usability of the help dialog on the options page (particularly for
     // selecting command names).
     if (requestedByHelpDialog && !globalThis.isVimiumHelpDialog) {
       this.localHints = [];
     } else {
-      this.localHints = LocalHints.getLocalHints(requireHref);
+      this.localHints = mode.getLocalHints
+        ? LocalHints.postProcessHints(mode.getLocalHints())
+        : LocalHints.getLocalHints(requireHref);
     }
     this.localHintDescriptors = this.localHints.map(({ linkText }, localIndex) => (
       new HintDescriptor({
@@ -354,6 +396,9 @@ const LinkHints = {
   activateModeToDownloadLink(count) {
     this.activateMode(count, { mode: DOWNLOAD_LINK_URL });
   },
+  activateModeToSelectScrollArea() {
+    this.activateMode(1, { mode: SELECT_SCROLL_AREA });
+  },
 };
 
 class LinkHintsMode {
@@ -428,6 +473,14 @@ class LinkHintsMode {
       document.documentElement.appendChild(div);
     }
 
+    // Outlines go below the markers. Once appended, they stay in place when markers are re-appended
+    // (by rotateHints).
+    for (const marker of this.hintMarkers) {
+      if (marker.outlineElement && !marker.outlineElement.isConnected) {
+        this.containerEl.prepend(marker.outlineElement);
+      }
+    }
+
     // Append these markers as top level children instead of as child nodes to the link itself,
     // because some clickable elements cannot contain children, e.g. submit buttons.
     const markerEls = this.hintMarkers.filter((m) => m.isLocalMarker()).map((m) => m.element);
@@ -485,6 +538,20 @@ class LinkHintsMode {
     }
   }
 
+  createAreaOutline(localHint) {
+    const el = DomUtils.createElement("div");
+    el.className = "vimium-reset vimium-area-outline";
+    if (localHint.isActiveArea) el.classList.add("vimium-active-area-outline");
+    const { left, top, width, height } = localHint.rect;
+    Object.assign(el.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+    });
+    return el;
+  }
+
   // Creates a link marker for the given link.
   createMarkerFor(desc) {
     const marker = new HintMarker();
@@ -501,6 +568,9 @@ class LinkHintsMode {
         element: el,
         localHint,
       });
+      if (this.mode.showAreaOutlines) {
+        marker.outlineElement = this.createAreaOutline(localHint);
+      }
     }
 
     return Object.assign(marker, {
@@ -735,7 +805,9 @@ class LinkHintsMode {
       clickEl = localHint.element;
       HintCoordinator.onExit.push((isSuccess) => {
         if (isSuccess) {
-          if (localHint.reason === "Frame.") {
+          if (this.mode.activateHint) {
+            return this.mode.activateHint(localHint);
+          } else if (localHint.reason === "Frame.") {
             return Utils.nextTick(() => focusThisFrame({ highlight: true }));
           } else if (localHint.reason === "Scroll.") {
             // Tell the scroller that this is the activated element.
@@ -823,6 +895,7 @@ class LinkHintsMode {
     if (!linkMarker.isLocalMarker()) return;
 
     linkMarker.element.style.display = "";
+    if (linkMarker.outlineElement) linkMarker.outlineElement.style.display = "";
     for (let j = 0, end = linkMarker.element.childNodes.length; j < end; j++) {
       if (j < matchingCharCount) {
         linkMarker.element.childNodes[j].classList.add("matchingCharacter");
@@ -835,6 +908,7 @@ class LinkHintsMode {
   hideMarker(marker) {
     if (marker.isLocalMarker()) {
       marker.element.style.display = "none";
+      if (marker.outlineElement) marker.outlineElement.style.display = "none";
     }
   }
 
@@ -1384,19 +1458,8 @@ const LocalHints = {
     if (!document.documentElement) return [];
 
     // Find all elements, recursing into shadow DOM if present.
-    const getAllElements = (root, elements) => {
-      if (elements == null) elements = [];
-      for (const element of Array.from(root.querySelectorAll("*"))) {
-        elements.push(element);
-        if (element.shadowRoot) {
-          getAllElements(element.shadowRoot, elements);
-        }
-      }
-      return elements;
-    };
-
-    const elements = getAllElements(document.documentElement);
-    let localHints = [];
+    const elements = DomUtils.getAllElements(document.documentElement);
+    const localHints = [];
 
     // The order of elements here is important; they should appear in the order they are in the DOM,
     // so that we can work out which element is on top when multiple elements overlap. Detecting
@@ -1411,6 +1474,13 @@ const LocalHints = {
       }
     }
 
+    return this.postProcessHints(localHints);
+  },
+
+  // Filters a list of candidate LocalHints (in document order) down to those which aren't false
+  // positives and aren't covered by other elements, positions their rects within the window, and
+  // fills in their link text for filtered hints.
+  postProcessHints(localHints) {
     // Traverse the DOM from descendants to ancestors, so later elements show above earlier elements.
     localHints = localHints.reverse();
 

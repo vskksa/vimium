@@ -160,10 +160,52 @@ const firstScrollableElement = function (element = null) {
   }
 };
 
+// The element which scroll commands start from: the activated element, or a default if there is
+// none. This doesn't set activatedElement.
+const getScrollStartElement = function () {
+  if (activatedElement && !activatedElement.isConnected) {
+    // The element was removed from the page, e.g. a sidebar was closed.
+    activatedElement = null;
+  }
+  return activatedElement || (getScrollingElement() && firstScrollableElement()) ||
+    getScrollingElement();
+};
+
+// Areas smaller than this (in either dimension) aren't offered as scroll areas.
+const minScrollAreaSize = 40;
+
+// Returns the axes ("x", "y" or "xy") on which `element` is a scroll container with content to
+// scroll, or "" if none. This uses the element's styles and sizes rather than doesScroll(), because
+// doesScroll() moves the element, which is slow and fires scroll events on the page.
+const getScrollAxes = function (element) {
+  const axes = [];
+  let style = null;
+  for (const direction of ["x", "y"]) {
+    const { max, viewSize } = scrollProperties[direction];
+    if (element[max] <= element[viewSize] + 1) continue;
+    style ??= globalThis.getComputedStyle(element);
+    const overflow = style.getPropertyValue(`overflow-${direction}`);
+    if (["auto", "scroll", "overlay"].includes(overflow)) axes.push(direction);
+  }
+  return axes.join("");
+};
+
+// Like getScrollAxes, but for the document's scrolling element (and body), whose overflow is
+// usually "visible" even when it scrolls, so we test by scrolling them.
+const getScrollAxesByScrolling = function (element) {
+  return ["x", "y"]
+    .filter((direction) =>
+      doesScroll(element, direction, 1, 1) || doesScroll(element, direction, -1, 1)
+    )
+    .join("");
+};
+
 const checkVisibility = function (element) {
   // If the activated element has been scrolled completely offscreen, then subsequent changes in its
   // scroll position will not provide any more visual feedback to the user. Therefore, we deactivate
   // it so that subsequent scrolls affect the parent element.
+  // The activated element can be reset while a smooth scroll is in progress, e.g. on a URL change.
+  if (!activatedElement) return;
   const rect = activatedElement.getBoundingClientRect();
   if (
     (rect.bottom < 0) || (rect.top > globalThis.innerHeight) || (rect.right < 0) ||
@@ -356,6 +398,75 @@ const Scroller = {
     activatedElement = null;
   },
 
+  getActivatedElement() {
+    return activatedElement;
+  },
+
+  // Makes `element` the target of subsequent scroll commands, as if the user had clicked on it.
+  setActivatedElement(element) {
+    activatedElement = element;
+  },
+
+  // Makes the scroll area `count` places after (or before, if negative) the current one the target
+  // of scroll commands. Returns { area, index, total }, or null if there are no scroll areas.
+  selectAdjacentScrollArea(count) {
+    const areas = this.getScrollAreas();
+    if (areas.length === 0) return null;
+    let index = areas.findIndex((area) => area.element === activatedElement);
+    if (index < 0) index = areas.findIndex((area) => area.isActive);
+    if (index < 0) index = count > 0 ? -1 : 0;
+    const total = areas.length;
+    const newIndex = (((index + count) % total) + total) % total;
+    const area = areas[newIndex];
+    activatedElement = area.element;
+    return { area, index: newIndex, total };
+  },
+
+  // Returns the visible areas in this frame which the user can scroll, in document order, as a list
+  // of { element, axes, rect, isActive, isPage }:
+  // - axes: "x", "y" or "xy".
+  // - rect: the visible part of the area, in viewport coordinates.
+  // - isActive: true for the area which vertical scroll commands would scroll now, and for the
+  //   activated element if it's an area itself (e.g. a selected horizontal code block).
+  // - isPage: true for the document's own scrolling element.
+  getScrollAreas() {
+    if (!document.documentElement) return [];
+    const scrollingElement = getScrollingElement();
+    const startElement = getScrollStartElement();
+    const verticalTarget = startElement && findScrollableElement(startElement, "y", 1, 1);
+    const isActive = (element) => element === verticalTarget || element === activatedElement;
+    const areas = [];
+
+    if (scrollingElement) {
+      const axes = getScrollAxesByScrolling(scrollingElement);
+      if (axes) {
+        areas.push({
+          element: scrollingElement,
+          axes,
+          rect: Rect.create(0, 0, globalThis.innerWidth, globalThis.innerHeight),
+          isActive: isActive(scrollingElement),
+          isPage: true,
+        });
+      }
+    }
+
+    for (const element of DomUtils.getAllElements(document.documentElement)) {
+      if (element === scrollingElement) continue;
+      // The body's overflow may be propagated to the viewport, in which case its styles and sizes
+      // don't tell us whether it scrolls by itself.
+      const axes = element === document.body
+        ? getScrollAxesByScrolling(element)
+        : getScrollAxes(element);
+      if (!axes) continue;
+      const rect = DomUtils.getVisibleViewportRect(element);
+      if (rect == null || rect.width < minScrollAreaSize || rect.height < minScrollAreaSize) {
+        continue;
+      }
+      areas.push({ element, axes, rect, isActive: isActive(element), isPage: false });
+    }
+    return areas;
+  },
+
   // scroll the active element in :direction by :amount * :factor.
   // :factor is needed because :amount can take on string values, which scrollBy converts to element
   // dimensions.
@@ -376,10 +487,7 @@ const Scroller = {
       return;
     }
 
-    if (!activatedElement) {
-      activatedElement = (getScrollingElement() && firstScrollableElement()) ||
-        getScrollingElement();
-    }
+    activatedElement = getScrollStartElement();
     if (!activatedElement) {
       return;
     }
@@ -394,10 +502,7 @@ const Scroller = {
   },
 
   scrollTo(direction, pos) {
-    if (!activatedElement) {
-      activatedElement = (getScrollingElement() && firstScrollableElement()) ||
-        getScrollingElement();
-    }
+    activatedElement = getScrollStartElement();
     if (!activatedElement) {
       return;
     }
@@ -410,10 +515,7 @@ const Scroller = {
 
   // Is element scrollable and not the activated element?
   isScrollableElement(element) {
-    if (!activatedElement) {
-      activatedElement = (getScrollingElement() && firstScrollableElement()) ||
-        getScrollingElement();
-    }
+    activatedElement = getScrollStartElement();
     return (element !== activatedElement) && isScrollableElement(element);
   },
 
