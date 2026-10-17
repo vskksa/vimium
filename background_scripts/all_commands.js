@@ -106,14 +106,12 @@ const allCommands = [
     name: "nextScrollArea",
     desc: "Scroll the next scrollable area",
     group: "navigation",
-    advanced: true,
   },
 
   {
     name: "previousScrollArea",
     desc: "Scroll the previous scrollable area",
     group: "navigation",
-    advanced: true,
   },
 
   {
